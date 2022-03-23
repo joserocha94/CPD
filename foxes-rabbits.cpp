@@ -176,10 +176,7 @@ void print_world()
     printf("\n---------------------------------");
 }
 
-void backup_world()
-{
-    std::copy(std::begin(world), std::end(world), std::begin(world_bck));
-}
+void backup_world() { std::copy(std::begin(world), std::end(world), std::begin(world_bck)); }
 
 void end()
 {
