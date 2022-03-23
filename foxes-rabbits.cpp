@@ -255,7 +255,6 @@ int main(int argc, char *argv[])
     double exec_time;
     exec_time = -omp_get_wtime();
 
-
     while (cursor < GENERATIONS)
     {
         // red gen
@@ -459,8 +458,7 @@ int main(int argc, char *argv[])
                     }
                 moves.clear();  
                 }               
-
-                
+          
                 else if (world[i][j].flag == 0 and moves.size() == 0) 
                     ++world[i][j].resident.starving_age;
 
