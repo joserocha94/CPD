@@ -83,6 +83,7 @@ std::vector<move> check_moves(item type, int i, int j)
 
     if (world[i][j].flag == 1)
         return moves;
+	
     if (type == FOX)
     {
         if (i-1 >= 0)
