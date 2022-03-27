@@ -278,7 +278,6 @@ int main(int argc, char *argv[])
                         switch (world[i][j].resident.type)
                         {
                             case FOX:    
-                        
                                 //breeds?
                                 if (world[i][j].resident.breeding_age >= FOX_B_AGE)   
                                 {
@@ -289,8 +288,7 @@ int main(int argc, char *argv[])
                                 else
                                     world[i][j].resident.type = NONE;
                             
-                                // finds FOX in the destination cell -> FOX-FOX conflitc
-                                
+                                // finds FOX in the destination cell -> FOX-FOX conflitc   
                                 if (world[temp_i][temp_j].resident.type == FOX)
                                 {
                                     if (world[i][j].resident.breeding_age > world[temp_i][temp_j].resident.breeding_age)
@@ -311,9 +309,7 @@ int main(int argc, char *argv[])
                                     if (world[temp_i][temp_j].resident.type == RABBIT)
                                         world[temp_i][temp_j].resident.starving_age = 0;
                                     else
-                                    {
                                         world[temp_i][temp_j].resident.starving_age = world_bck[i][j].resident.starving_age+1;
-                                    }
 
                                     world[temp_i][temp_j].resident.type = FOX;
                                     world[temp_i][temp_j].resident.breeding_age = world[i][j].resident.breeding_age;      
@@ -321,7 +317,6 @@ int main(int argc, char *argv[])
                             break;
 
                             case RABBIT:
-
                                 // breeds?
                                 if (world[i][j].resident.breeding_age >= RABBIT_B_AGE)
                                 {
@@ -350,15 +345,12 @@ int main(int argc, char *argv[])
                                         break;                                                        
                                 }                                                     
                             break;
-
                         default:
                             break;
-
                         }
                     world[temp_i][temp_j].flag = 1;
                     moves.clear();  
-                    }              
-                    
+                    }                               
                     else if (moves.size() == 0)
                         ++world[i][j].resident.starving_age;
                 }
@@ -391,7 +383,6 @@ int main(int argc, char *argv[])
                         switch (world[i][j].resident.type)
                         {
                             case FOX:  
-
                                 // breeds?
                                 if (world[i][j].resident.breeding_age >= FOX_B_AGE)   
                                 {
@@ -431,7 +422,6 @@ int main(int argc, char *argv[])
                             break;
 
                             case RABBIT:
-
                                 // breeds?
                                 if (world[i][j].resident.breeding_age >= RABBIT_B_AGE)
                                 {
@@ -461,14 +451,12 @@ int main(int argc, char *argv[])
 
                         default:
                             break;
-
                         }
                     moves.clear();  
                     }               
-                
                     else if (world[i][j].flag == 0 and moves.size() == 0) 
                         ++world[i][j].resident.starving_age;
-
+			
                     else if (world[i][j].flag == 1)
                         world[i][j].flag = 0;
                 }
