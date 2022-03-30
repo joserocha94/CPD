@@ -27,6 +27,10 @@ struct Cell
 std::vector<std::vector<Cell>> world;
 std::vector<std::vector<Cell>> world_bck;
 
+int N_ROCKS, N_FOXES, N_RABBITS;
+int FOX_B_AGE, FOX_S_AGE, RABBIT_B_AGE;
+int GENERATIONS;
+
 int FOXES, RABBITS, ROCKS;
 int M, N;
 
@@ -76,6 +80,22 @@ void init_world(std::vector<std::vector<Cell>> &cells, long lines, long cols)
 	}
 }
 
+void init_locks(std::vector<std::vector<omp_lock_t>> &myLocks, long  lines, long cols)
+{
+    myLocks.clear();
+	myLocks.reserve(lines);
+
+    for (unsigned int i = 0; i < lines; i++)  
+	{
+		std::vector<omp_lock_t> init_lines(cols);
+		
+		for (unsigned int j = 0; j < cols; j++)
+            omp_init_lock(&(init_lines[j]));
+        
+        myLocks.emplace_back(init_lines);
+	}
+}
+
 std::vector<move> check_moves(item type, int i, int j)
 {
     std::vector<move> moves;
@@ -116,7 +136,7 @@ std::vector<move> check_moves(item type, int i, int j)
     return moves;
 }
 
-std::pair<int, int> get_position(std::vector<move> moves, int k, int i, int j)
+std::pair<int, int> get_position(std::vector<move> moves, int k, int i, int j, int* critical)
 {
     int temp_i, temp_j;
 
@@ -125,20 +145,25 @@ std::pair<int, int> get_position(std::vector<move> moves, int k, int i, int j)
         case 0:
             temp_i = i-1;
             temp_j = j;
+            *critical = 1;
             break;
         case 1:
             temp_i = i;
             temp_j = j+1;
+            *critical = 0;
             break;
         case 2:
             temp_i = i+1;
             temp_j = j;
+            *critical = 1;
             break;
         case 3: 
             temp_i = i;
             temp_j = j-1;
+            *critical = 0;
             break;
         default:
+            *critical = 0;
             break;
     }   
 
@@ -174,17 +199,13 @@ void print_world()
     printf("\n---------------------------------");
 }
 
-void backup_world()
-{
-    std::copy(std::begin(world), std::end(world), std::begin(world_bck));
-}
-
-void get_results()
+void terminate()
 {
     FOXES = RABBITS = ROCKS = 0;
 
-    #pragma omp parallel for reduction (+: FOXES, RABBITS, ROCKS)
+    #pragma omp parallel for collapse(2) reduction (+ : FOXES, RABBITS, ROCKS)
     for (int i=0; i<M; i++)
+    {    
         for(int j=0; j<N; j++)
         {    
             switch(world[i][j].resident.type)
@@ -202,6 +223,7 @@ void get_results()
                     break;
             }
         }
+    }
 }
 
 void kill_foxes(int target_age)
@@ -221,13 +243,279 @@ void kill_foxes(int target_age)
     }
 }
 
+void destroy_locks(std::vector<std::vector<omp_lock_t>> &myLocks)
+{
+    #pragma omp parallel for collapse(2)
+    for (int i = 0; i < M; i++)
+    {
+        for (int j = 0; j < N; j++)
+        {
+            omp_destroy_lock(&(myLocks[i][j]));
+        }
+    }
+}
+
+void run_red(int *critical, std::vector<std::vector<omp_lock_t>> &myLocks, int i, int j)
+{
+    std::vector<move> moves = check_moves(world[i][j].resident.type, i, j);
+    world[i][j].resident.breeding_age++;
+    
+    if (moves.size() > 0)
+    {
+        int new_move = (i * N + j) % moves.size();     
+        std::pair <int, int> p = get_position(moves, new_move, i, j, critical);
+
+        int temp_i = p.first;
+        int temp_j = p.second;
+
+        if (*critical)
+            omp_set_lock(&(myLocks[temp_i][temp_j]));
+        
+        switch (world[i][j].resident.type)
+        {
+            case FOX:    
+            
+                //breeds?
+                if (world[i][j].resident.breeding_age >= FOX_B_AGE)   
+                {
+                    world[i][j].resident.type = FOX;
+                    world[i][j].resident.breeding_age = 0;
+                    world[i][j].resident.starving_age = 0;
+                }
+                else
+                    world[i][j].resident.type = NONE;
+                
+                // finds FOX in the destination cell -> FOX-FOX conflitc
+                if (world[temp_i][temp_j].resident.type == FOX)
+                {
+                    if (world[i][j].resident.breeding_age > world[temp_i][temp_j].resident.breeding_age)
+                    {
+                        world[temp_i][temp_j].resident.breeding_age = world[i][j].resident.breeding_age;
+                        world[temp_i][temp_j].resident.starving_age = world_bck[i][j].resident.starving_age + 1; 
+                    }
+                    else if (world[i][j].resident.breeding_age == world[temp_i][temp_j].resident.breeding_age)
+                    { 
+                        world[temp_i][temp_j].resident.starving_age = 
+                            world_bck[i][j].resident.starving_age + 1 >= world[temp_i][temp_j].resident.starving_age ? 
+                            world[temp_i][temp_j].resident.starving_age : world_bck[i][j].resident.starving_age + 1;
+                    }                                 
+                }
+                // finds RABBIT or finds it EMPTY
+                else 
+                {                        
+                    if (world[temp_i][temp_j].resident.type == RABBIT)
+                        world[temp_i][temp_j].resident.starving_age = 0;
+                    else
+                    {
+                        world[temp_i][temp_j].resident.starving_age = world_bck[i][j].resident.starving_age+1;
+                    }
+
+                    world[temp_i][temp_j].resident.type = FOX;
+                    world[temp_i][temp_j].resident.breeding_age = world[i][j].resident.breeding_age;      
+                }
+            break;
+
+            case RABBIT:
+                // breeds?
+                if (world[i][j].resident.breeding_age >= RABBIT_B_AGE)
+                {
+                    world[i][j].resident.type = RABBIT;
+                    world[i][j].resident.breeding_age = 0;
+                }
+                else 
+                    world[i][j].resident.type = NONE;
+                // what is on the destination position?
+                switch (world[temp_i][temp_j].resident.type)
+                {
+                    case FOX:
+                        world[temp_i][temp_j].resident.starving_age = 0;
+                        break;
+
+                    case RABBIT:
+                        if (world[i][j].resident.breeding_age > world[temp_i][temp_j].resident.breeding_age)
+                            world[temp_i][temp_j].resident.breeding_age = world[i][j].resident.breeding_age;
+                        break;
+
+                    case NONE:
+                    default:
+                        world[temp_i][temp_j].resident.breeding_age = world[i][j].resident.breeding_age;     
+                        world[temp_i][temp_j].resident.type = RABBIT;
+                        break;                                                        
+                }                                                     
+            break;
+        default:
+            break;
+
+        }
+
+        world[temp_i][temp_j].flag = 1;
+        moves.clear();
+
+        if (*critical)
+            omp_unset_lock(&(myLocks[temp_i][temp_j]));
+    }              
+    
+    else if (moves.size() == 0)
+        ++world[i][j].resident.starving_age;
+}
+
+void run_black(int *critical, std::vector<std::vector<omp_lock_t>> &myLocks, int i, int j)
+{
+    std::vector<move> moves = check_moves(world[i][j].resident.type, i, j); 
+
+    if (world[i][j].flag == 0)
+        world[i][j].resident.breeding_age++;
+
+    if (moves.size() > 0)
+    {
+        int new_move = (i * N + j) % moves.size();
+        std::pair <int, int> p = get_position(moves, new_move, i, j, critical);
+
+        int temp_i = p.first;
+        int temp_j = p.second;
+
+        if (*critical)
+            omp_set_lock(&(myLocks[temp_i][temp_j]));          
+
+        switch (world[i][j].resident.type)
+        {
+            case FOX:  
+
+                // breeds?
+                if (world[i][j].resident.breeding_age >= FOX_B_AGE)   
+                {
+                    world[i][j].resident.type = FOX;
+                    world[i][j].resident.breeding_age = 0;
+                    world[i][j].resident.starving_age = 0;
+                }
+                else
+                    world[i][j].resident.type = NONE;
+
+                // finds FOX in the destination cell -> FOX-FOX conflitc
+                if (world[temp_i][temp_j].resident.type == FOX)
+                {
+                    if (world[i][j].resident.breeding_age > world[temp_i][temp_j].resident.breeding_age)
+                    {
+                        world[temp_i][temp_j].resident.breeding_age = world[i][j].resident.breeding_age;
+                        world[temp_i][temp_j].resident.starving_age = world_bck[i][j].resident.starving_age + 1; 
+                    }
+                    else if (world[i][j].resident.breeding_age == world[temp_i][temp_j].resident.breeding_age)
+                    { 
+                        world[temp_i][temp_j].resident.starving_age = 
+                            world_bck[i][j].resident.starving_age + 1 >= world[temp_i][temp_j].resident.starving_age ? 
+                            world[temp_i][temp_j].resident.starving_age : world_bck[i][j].resident.starving_age + 1;
+                    }                                            
+                } 
+                // finds RABBIT or finds it EMPTY
+                else 
+                {                            
+                    if (world[temp_i][temp_j].resident.type == RABBIT)
+                        world[temp_i][temp_j].resident.starving_age = 0;
+                    else
+                        world[temp_i][temp_j].resident.starving_age = world_bck[i][j].resident.starving_age+1;
+                    
+                    world[temp_i][temp_j].resident.type = FOX;
+                    world[temp_i][temp_j].resident.breeding_age = world[i][j].resident.breeding_age;  
+                }  
+            break;
+
+            case RABBIT:
+
+                // breeds?
+                if (world[i][j].resident.breeding_age >= RABBIT_B_AGE)
+                {
+                    world[i][j].resident.type = RABBIT;
+                    world[i][j].resident.breeding_age = 0;
+                }
+                else 
+                    world[i][j].resident.type = NONE;
+
+                // what is on the destination position?
+                switch (world[temp_i][temp_j].resident.type)
+                {
+                    case FOX:
+                        world[temp_i][temp_j].resident.starving_age = 0;
+                        break;
+                    case RABBIT:
+                        if (world[i][j].resident.breeding_age > world[temp_i][temp_j].resident.breeding_age)
+                            world[temp_i][temp_j].resident.breeding_age = world[i][j].resident.breeding_age;
+                        break;
+                    case NONE:
+                    default:
+                        world[temp_i][temp_j].resident.type = RABBIT;
+                        world[temp_i][temp_j].resident.breeding_age = world[i][j].resident.breeding_age; 
+                        break;                                                        
+                }         
+            break;
+
+        default:
+            break;
+
+        }
+        moves.clear();
+
+        if (*critical)
+            omp_unset_lock(&(myLocks[temp_i][temp_j]));
+    }               
+    
+    else if (world[i][j].flag == 0 and moves.size() == 0) 
+        ++world[i][j].resident.starving_age;
+
+    else if (world[i][j].flag == 1)
+        world[i][j].flag = 0;
+}
+
+void backup_world() { std::copy(std::begin(world), std::end(world), std::begin(world_bck)); }
+
+void backup_red()
+{
+    #pragma omp parallel for collapse(2)
+    for (int i=0; i < M; i = i+2)
+        for (int j = 0; j < N; j = j+2)
+        {
+            world_bck[i][j].flag = world[i][j].flag;
+            world_bck[i][j].resident.type = world[i][j].resident.type;
+            world_bck[i][j].resident.breeding_age = world[i][j].resident.breeding_age;
+            world_bck[i][j].resident.starving_age = world[i][j].resident.starving_age;
+        }
+
+    #pragma omp parallel for collapse(2)      
+    for( int i = 1; i < M; i = i + 2)
+        for (int j = 1; j < N; j = j+2)
+        {
+            world_bck[i][j].flag = world[i][j].flag;
+            world_bck[i][j].resident.type = world[i][j].resident.type;
+            world_bck[i][j].resident.breeding_age = world[i][j].resident.breeding_age;
+            world_bck[i][j].resident.starving_age = world[i][j].resident.starving_age;
+        }
+}
+
+void backup_black()
+{
+    #pragma omp parallel for collapse(2)
+    for (int i=0; i < M; i = i + 2)
+        for (int j = 1; j < N; j = j + 2)
+        {
+            world_bck[i][j].flag = world[i][j].flag;
+            world_bck[i][j].resident.type = world[i][j].resident.type;
+            world_bck[i][j].resident.breeding_age = world[i][j].resident.breeding_age;
+            world_bck[i][j].resident.starving_age = world[i][j].resident.starving_age;
+        }
+
+    #pragma omp parallel for collapse(2)
+    for (int i = 1; i < M; i = i + 2)
+        for (int j = 0; j < N; j = j + 2)
+        {
+            world_bck[i][j].flag = world[i][j].flag;
+            world_bck[i][j].resident.type = world[i][j].resident.type;
+            world_bck[i][j].resident.breeding_age = world[i][j].resident.breeding_age;
+            world_bck[i][j].resident.starving_age = world[i][j].resident.starving_age;
+        }
+}
+
+
 int main(int argc, char *argv[])
 {
-    int N_ROCKS, N_FOXES, N_RABBITS;
-    int FOX_B_AGE, FOX_S_AGE, RABBIT_B_AGE;
-    int GENERATIONS;
-    int cursor = 0;
-
     GENERATIONS = std::stol(argv[1]);
     M = std::stol(argv[2]);
     N = std::stol(argv[3]);
@@ -241,8 +529,14 @@ int main(int argc, char *argv[])
     FOX_S_AGE = std::stol(argv[9]);
 
     uint32_t seed = atoi(argv[10]);
+    int cursor = 0;
+    int critical = 0;
+
     init_world(world, M, N);
     init_world(world_bck, M, N);
+
+    std::vector<std::vector<omp_lock_t>> myLocks;
+    init_locks(myLocks, M, N);
 
     generate_element(N_ROCKS, &seed, ROCK, 0, 0);
     generate_element(N_RABBITS, &seed, RABBIT, 0, 0);
@@ -254,225 +548,45 @@ int main(int argc, char *argv[])
     exec_time = -omp_get_wtime();
 
     while (cursor < GENERATIONS)
-    {
-        //printf("\nGeneration %d", cursor); fflush(stdout);
+    {   
+        // red gen even rows
+        #pragma omp parallel for private(critical)
+        for (int i=0; i < M; i = i+2)
+            for (int j = 0; j < N; j = j+2)
+                run_red(&critical, myLocks, i, j);
 
-        #pragma omp parallel for collapse(2)
-        for (int i = 0; i < M; i++)
-        {
-            for (int j = 0; j<N; j++)
-            {
-                if (i % 2 == 0 && j % 2 == 0 || j % 2 != 0 && i % 2 != 0)
-                {
-                    std::vector<move> moves = check_moves(world[i][j].resident.type, i, j);
-                    world[i][j].resident.breeding_age++;
+        // red gen odd rows
+        #pragma omp parallel for private(critical)
+        for( int i = 1; i < M; i = i + 2)
+            for (int j = 1; j < N; j = j+2)
+                run_red(&critical, myLocks, i, j);
+ 
+        backup_red();
 
-                    if (moves.size() > 0)
-                    {
-                        int new_move = (i * N + j) % moves.size();
-                        std::pair <int, int> p = get_position(moves, new_move, i, j);
+        // black gen even rows
+        #pragma omp parallel for private(critical)
+        for (int i=0; i < M; i = i + 2)
+            for (int j = 1; j < N; j = j + 2)
+                run_black(&critical, myLocks, i, j);
+ 
 
-                        int temp_i = p.first;
-                        int temp_j = p.second;                 
-                        
-                        switch (world[i][j].resident.type)
-                        {
-                            case FOX:    
-                                //breeds?
-                                if (world[i][j].resident.breeding_age >= FOX_B_AGE)   
-                                {
-                                    world[i][j].resident.type = FOX;
-                                    world[i][j].resident.breeding_age = 0;
-                                    world[i][j].resident.starving_age = 0;
-                                }
-                                else
-                                    world[i][j].resident.type = NONE;
-                            
-                                // finds FOX in the destination cell -> FOX-FOX conflitc   
-                                if (world[temp_i][temp_j].resident.type == FOX)
-                                {
-                                    if (world[i][j].resident.breeding_age > world[temp_i][temp_j].resident.breeding_age)
-                                    {
-                                        world[temp_i][temp_j].resident.breeding_age = world[i][j].resident.breeding_age;
-                                        world[temp_i][temp_j].resident.starving_age = world_bck[i][j].resident.starving_age + 1; 
-                                    }
-                                    else if (world[i][j].resident.breeding_age == world[temp_i][temp_j].resident.breeding_age)
-                                    { 
-                                        world[temp_i][temp_j].resident.starving_age = 
-                                            world_bck[i][j].resident.starving_age + 1 >= world[temp_i][temp_j].resident.starving_age ? 
-                                            world[temp_i][temp_j].resident.starving_age : world_bck[i][j].resident.starving_age + 1;
-                                    }                                 
-                                } 
-                                // finds RABBIT or finds it EMPTY
-                                else 
-                                {                        
-                                    if (world[temp_i][temp_j].resident.type == RABBIT)
-                                        world[temp_i][temp_j].resident.starving_age = 0;
-                                    else
-                                        world[temp_i][temp_j].resident.starving_age = world_bck[i][j].resident.starving_age+1;
-
-                                    world[temp_i][temp_j].resident.type = FOX;
-                                    world[temp_i][temp_j].resident.breeding_age = world[i][j].resident.breeding_age;      
-                                }
-                            break;
-
-                            case RABBIT:
-                                // breeds?
-                                if (world[i][j].resident.breeding_age >= RABBIT_B_AGE)
-                                {
-                                    world[i][j].resident.type = RABBIT;
-                                    world[i][j].resident.breeding_age = 0;
-                                }
-                                else 
-                                    world[i][j].resident.type = NONE;
-
-                                // what is on the destination position?
-                                switch (world[temp_i][temp_j].resident.type)
-                                {
-                                    case FOX:
-                                        world[temp_i][temp_j].resident.starving_age = 0;
-                                        break;
-
-                                    case RABBIT:
-                                        if (world[i][j].resident.breeding_age > world[temp_i][temp_j].resident.breeding_age)
-                                            world[temp_i][temp_j].resident.breeding_age = world[i][j].resident.breeding_age;
-                                        break;
-
-                                    case NONE:
-                                    default:
-                                        world[temp_i][temp_j].resident.breeding_age = world[i][j].resident.breeding_age;     
-                                        world[temp_i][temp_j].resident.type = RABBIT;
-                                        break;                                                        
-                                }                                                     
-                            break;
-                        default:
-                            break;
-                        }
-                    world[temp_i][temp_j].flag = 1;
-                    moves.clear();  
-                    }                               
-                    else if (moves.size() == 0)
-                        ++world[i][j].resident.starving_age;
-                }
-            }
-        }      
-      
-        backup_world();   
-
-        #pragma omp parallel for collapse(2)
-        for (int i = 0; i < M; i++)
-        {
-            //for (int j = (i % 2 == 0) ? 1 : 0; j < N; j = j+2)
-            for (int j = 0; j < N; j++)
-            {
-                if (i % 2 == 0 && j % 2 != 0 || i % 2 != 0 && j % 2 == 0)
-                {
-                    std::vector<move> moves = check_moves(world[i][j].resident.type, i, j); 
-
-                    if (world[i][j].flag == 0)
-                        world[i][j].resident.breeding_age++;
-
-                    if (moves.size() > 0)
-                    {
-                        int new_move = (i * N + j) % moves.size();
-                        std::pair <int, int> p = get_position(moves, new_move, i, j);
-
-                        int temp_i = p.first;
-                        int temp_j = p.second;          
-
-                        switch (world[i][j].resident.type)
-                        {
-                            case FOX:  
-                                // breeds?
-                                if (world[i][j].resident.breeding_age >= FOX_B_AGE)   
-                                {
-                                    world[i][j].resident.type = FOX;
-                                    world[i][j].resident.breeding_age = 0;
-                                    world[i][j].resident.starving_age = 0;
-                                }
-                                else
-                                    world[i][j].resident.type = NONE;
-
-                                // finds FOX in the destination cell -> FOX-FOX conflitc
-                                if (world[temp_i][temp_j].resident.type == FOX)
-                                {
-                                    if (world[i][j].resident.breeding_age > world[temp_i][temp_j].resident.breeding_age)
-                                    {
-                                        world[temp_i][temp_j].resident.breeding_age = world[i][j].resident.breeding_age;
-                                        world[temp_i][temp_j].resident.starving_age = world_bck[i][j].resident.starving_age + 1; 
-                                    }
-                                    else if (world[i][j].resident.breeding_age == world[temp_i][temp_j].resident.breeding_age)
-                                    { 
-                                        world[temp_i][temp_j].resident.starving_age = 
-                                            world_bck[i][j].resident.starving_age + 1 >= world[temp_i][temp_j].resident.starving_age ? 
-                                            world[temp_i][temp_j].resident.starving_age : world_bck[i][j].resident.starving_age + 1;
-                                    }                                            
-                                } 
-                                // finds RABBIT or finds it EMPTY
-                                else 
-                                {                            
-                                    if (world[temp_i][temp_j].resident.type == RABBIT)
-                                        world[temp_i][temp_j].resident.starving_age = 0;
-                                    else
-                                        world[temp_i][temp_j].resident.starving_age = world_bck[i][j].resident.starving_age+1;
-                                    
-                                    world[temp_i][temp_j].resident.type = FOX;
-                                    world[temp_i][temp_j].resident.breeding_age = world[i][j].resident.breeding_age;  
-                                }  
-                            break;
-
-                            case RABBIT:
-                                // breeds?
-                                if (world[i][j].resident.breeding_age >= RABBIT_B_AGE)
-                                {
-                                    world[i][j].resident.type = RABBIT;
-                                    world[i][j].resident.breeding_age = 0;
-                                }
-                                else 
-                                    world[i][j].resident.type = NONE;
-
-                                // what is on the destination position?
-                                switch (world[temp_i][temp_j].resident.type)
-                                {
-                                    case FOX:
-                                        world[temp_i][temp_j].resident.starving_age = 0;
-                                        break;
-                                    case RABBIT:
-                                        if (world[i][j].resident.breeding_age > world[temp_i][temp_j].resident.breeding_age)
-                                            world[temp_i][temp_j].resident.breeding_age = world[i][j].resident.breeding_age;
-                                        break;
-                                    case NONE:
-                                    default:
-                                        world[temp_i][temp_j].resident.type = RABBIT;
-                                        world[temp_i][temp_j].resident.breeding_age = world[i][j].resident.breeding_age; 
-                                        break;                                                        
-                                }         
-                            break;
-
-                        default:
-                            break;
-                        }
-                    moves.clear();  
-                    }               
-                    else if (world[i][j].flag == 0 and moves.size() == 0) 
-                        ++world[i][j].resident.starving_age;
-			
-                    else if (world[i][j].flag == 1)
-                        world[i][j].flag = 0;
-                }
-            }
-        }      
+        // black gen odd rows
+        #pragma omp parallel for private(critical)
+        for (int i = 1; i < M; i = i + 2)
+            for (int j = 0; j < N; j = j + 2)
+                run_black(&critical, myLocks, i, j);
 
         kill_foxes(FOX_S_AGE);                          
         backup_world();   
         cursor++;
     }
-   
-    get_results();
 
+    terminate();
+    
     exec_time += omp_get_wtime();
-    fprintf(stderr, "%.1fs", exec_time); fflush(stdout);
+    destroy_locks(myLocks);
 
+    fprintf(stderr, "%.1fs", exec_time); fflush(stdout);
     printf("\n%d %d %d\n", ROCKS, RABBITS, FOXES); fflush(stdout);
 
     return 0;
