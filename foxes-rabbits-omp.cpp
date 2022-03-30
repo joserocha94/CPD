@@ -587,7 +587,7 @@ int main(int argc, char *argv[])
     destroy_locks(myLocks);
 
     fprintf(stderr, "%.1fs", exec_time); fflush(stdout);
-    printf("\n%d %d %d\n", ROCKS, RABBITS, FOXES); fflush(stdout);
+    printf("\n%d %d %d \n", ROCKS, RABBITS, FOXES); fflush(stdout);
 
     return 0;
 }
