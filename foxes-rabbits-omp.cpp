@@ -138,7 +138,7 @@ std::vector<move> check_moves(item type, int i, int j)
 
 std::pair<int, int> get_position(std::vector<move> moves, int k, int i, int j)
 {
-    int temp_i, temp_j;
+    int temp_i, temp_j; 
 
     switch (moves[k])
     {
@@ -225,35 +225,25 @@ void kill_foxes(int target_age)
 {        
     #pragma omp parallel for collapse(2)
     for (int i = 0; i < M; i++)
-    {
         for (int j = 0; j < N; j++)
-        {
             if (world[i][j].resident.starving_age >= target_age && world[i][j].resident.type == FOX)
             {
                 world[i][j].resident.type = NONE;
                 world[i][j].resident.starving_age = 0;
                 world[i][j].resident.breeding_age = 0;
             }
-        }
-    }
 }
 
 void destroy_locks(std::vector<std::vector<omp_lock_t>> &myLocks)
 {
     #pragma omp parallel for collapse(2)
     for (int i = 0; i < M; i++)
-    {
         for (int j = 0; j < N; j++)
-        {
             omp_destroy_lock(&(myLocks[i][j]));
-        }
-    }
 }
 
 void run_red(std::vector<std::vector<omp_lock_t>> &myLocks, int i, int j)
-{   
-    
-    
+{    
     std::vector<move> moves = check_moves(world[i][j].resident.type, i, j);
     world[i][j].resident.breeding_age++;
     
@@ -278,19 +268,26 @@ void run_red(std::vector<std::vector<omp_lock_t>> &myLocks, int i, int j)
         int big_pack = small_pack + 1;
 
         int next_zone, previous_zone;
-        if (extra){
+        if (extra)
+		{
             next_zone = (1+t_num)*big_pack;
             previous_zone = (t_num)*big_pack;
-        }else{
+        }
+		else
+		{
             next_zone = (big_pack*rest)+(((1+t_num)-rest)*small_pack);
             previous_zone = (big_pack*rest)+(((t_num)-rest)*small_pack);
         }
-
-        if( t_num!=(num_ts-1) && (temp_i == (next_zone-1) || temp_i == next_zone )){   // check conflict with next thread
+		
+		// check conflict with next thread
+        if( t_num!=(num_ts-1) && (temp_i == (next_zone-1) || temp_i == next_zone ))
+		{   
             omp_set_lock(&(myLocks[temp_i][temp_j]));
             set_lock=1;
         }
-        else if (t_num!=0 && (temp_i == (previous_zone-1) || temp_i == previous_zone )){  // check conflict with previous thread
+		// check conflict with previous thread
+        else if (t_num!=0 && (temp_i == (previous_zone-1) || temp_i == previous_zone ))
+		{  
             omp_set_lock(&(myLocks[temp_i][temp_j]));
             set_lock=1;
         }
@@ -298,8 +295,7 @@ void run_red(std::vector<std::vector<omp_lock_t>> &myLocks, int i, int j)
         
         switch (world[i][j].resident.type)
         {
-            case FOX:    
-            
+            case FOX:        
                 //breeds?
                 if (world[i][j].resident.breeding_age >= FOX_B_AGE)   
                 {
@@ -372,7 +368,6 @@ void run_red(std::vector<std::vector<omp_lock_t>> &myLocks, int i, int j)
             break;
 
         }
-
         world[temp_i][temp_j].flag = 1;
         moves.clear();
 
@@ -380,9 +375,7 @@ void run_red(std::vector<std::vector<omp_lock_t>> &myLocks, int i, int j)
             omp_unset_lock(&(myLocks[temp_i][temp_j]));
             set_lock=0;
         }
-
     }              
-    
     else if (moves.size() == 0)
         ++world[i][j].resident.starving_age;
 }
@@ -525,7 +518,6 @@ void run_black( std::vector<std::vector<omp_lock_t>> &myLocks, int i, int j)
 
 void backup_world() { std::copy(std::begin(world), std::end(world), std::begin(world_bck)); }
 
-
 int main(int argc, char *argv[])
 {
     GENERATIONS = std::stol(argv[1]);
@@ -543,7 +535,6 @@ int main(int argc, char *argv[])
     uint32_t seed = atoi(argv[10]);
     int cursor = 0;
     
-
     init_world(world, M, N);
     init_world(world_bck, M, N);
 
@@ -555,30 +546,25 @@ int main(int argc, char *argv[])
     generate_element(N_FOXES, &seed, FOX, 0, 0);
 
     backup_world();
-
-    
+   
     double exec_time;
     exec_time = -omp_get_wtime();
-    //omp_set_num_threads(2);
+
     while (cursor < GENERATIONS)
     {   
         // red gen
         #pragma omp parallel for schedule(static)
-        for (int i = 0; i < M; i++){
-            for (int j = (i % 2 == 0) ? 0 : 1; j < N; j = j+2){
+        for (int i = 0; i < M; i++)
+            for (int j = (i % 2 == 0) ? 0 : 1; j < N; j = j+2)
                 run_red(myLocks, i, j);
-            }
-        }
  
         backup_world();  
 
         // black gen
         #pragma omp parallel for schedule(static)
-        for (int i = 0; i < M; i++){
-            for (int j = (i % 2 == 0) ? 1 : 0; j < N; j = j+2){
+        for (int i = 0; i < M; i++)
+            for (int j = (i % 2 == 0) ? 1 : 0; j < N; j = j+2)
                 run_black(myLocks, i, j);
-            }
-        }
         
         kill_foxes(FOX_S_AGE);                          
         backup_world();   
