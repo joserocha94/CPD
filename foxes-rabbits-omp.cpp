@@ -136,7 +136,7 @@ std::vector<move> check_moves(item type, int i, int j)
     return moves;
 }
 
-std::pair<int, int> get_position(std::vector<move> moves, int k, int i, int j, int* critical)
+std::pair<int, int> get_position(std::vector<move> moves, int k, int i, int j)
 {
     int temp_i, temp_j;
 
@@ -145,25 +145,20 @@ std::pair<int, int> get_position(std::vector<move> moves, int k, int i, int j, i
         case 0:
             temp_i = i-1;
             temp_j = j;
-            *critical = 1;
             break;
         case 1:
             temp_i = i;
             temp_j = j+1;
-            *critical = 0;
             break;
         case 2:
             temp_i = i+1;
             temp_j = j;
-            *critical = 1;
             break;
         case 3: 
             temp_i = i;
             temp_j = j-1;
-            *critical = 0;
             break;
         default:
-            *critical = 0;
             break;
     }   
 
@@ -255,21 +250,51 @@ void destroy_locks(std::vector<std::vector<omp_lock_t>> &myLocks)
     }
 }
 
-void run_red(int *critical, std::vector<std::vector<omp_lock_t>> &myLocks, int i, int j)
-{
+void run_red(std::vector<std::vector<omp_lock_t>> &myLocks, int i, int j)
+{   
+    
+    
     std::vector<move> moves = check_moves(world[i][j].resident.type, i, j);
     world[i][j].resident.breeding_age++;
     
     if (moves.size() > 0)
     {
         int new_move = (i * N + j) % moves.size();     
-        std::pair <int, int> p = get_position(moves, new_move, i, j, critical);
+        std::pair <int, int> p = get_position(moves, new_move, i, j);
 
         int temp_i = p.first;
         int temp_j = p.second;
 
-        if (*critical)
+        // Check if the line being written is critical
+        int set_lock = 0;
+
+        int num_ts = omp_get_num_threads();
+        int t_num = omp_get_thread_num();
+
+        int rest =  M%num_ts;
+        int extra = (t_num+1) <= rest ? 1 : 0;
+
+        int small_pack = (int)floor(M/num_ts);      // used to calculate critical zone for divisions with rest
+        int big_pack = small_pack + 1;
+
+        int next_zone, previous_zone;
+        if (extra){
+            next_zone = (1+t_num)*big_pack;
+            previous_zone = (t_num)*big_pack;
+        }else{
+            next_zone = (big_pack*rest)+(((1+t_num)-rest)*small_pack);
+            previous_zone = (big_pack*rest)+(((t_num)-rest)*small_pack);
+        }
+
+        if( t_num!=(num_ts-1) && (temp_i == (next_zone-1) || temp_i == next_zone )){   // check conflict with next thread
             omp_set_lock(&(myLocks[temp_i][temp_j]));
+            set_lock=1;
+        }
+        else if (t_num!=0 && (temp_i == (previous_zone-1) || temp_i == previous_zone )){  // check conflict with previous thread
+            omp_set_lock(&(myLocks[temp_i][temp_j]));
+            set_lock=1;
+        }
+            
         
         switch (world[i][j].resident.type)
         {
@@ -351,16 +376,19 @@ void run_red(int *critical, std::vector<std::vector<omp_lock_t>> &myLocks, int i
         world[temp_i][temp_j].flag = 1;
         moves.clear();
 
-        if (*critical)
+        if (set_lock){
             omp_unset_lock(&(myLocks[temp_i][temp_j]));
+            set_lock=0;
+        }
+
     }              
     
     else if (moves.size() == 0)
         ++world[i][j].resident.starving_age;
 }
 
-void run_black(int *critical, std::vector<std::vector<omp_lock_t>> &myLocks, int i, int j)
-{
+void run_black( std::vector<std::vector<omp_lock_t>> &myLocks, int i, int j)
+{   
     std::vector<move> moves = check_moves(world[i][j].resident.type, i, j); 
 
     if (world[i][j].flag == 0)
@@ -369,13 +397,40 @@ void run_black(int *critical, std::vector<std::vector<omp_lock_t>> &myLocks, int
     if (moves.size() > 0)
     {
         int new_move = (i * N + j) % moves.size();
-        std::pair <int, int> p = get_position(moves, new_move, i, j, critical);
+        std::pair <int, int> p = get_position(moves, new_move, i, j);
 
         int temp_i = p.first;
         int temp_j = p.second;
+        
+        // Check if the line being written is critical
+        int set_lock = 0;
 
-        if (*critical)
-            omp_set_lock(&(myLocks[temp_i][temp_j]));          
+        int num_ts = omp_get_num_threads();
+        int t_num = omp_get_thread_num();
+
+        int rest =  M%num_ts;
+        int extra = (t_num+1) <= rest ? 1 : 0;
+
+        int small_pack = (int)floor(M/num_ts); // used to calculate critical zone for divisions with rest
+        int big_pack = small_pack + 1;
+
+        int next_zone, previous_zone;
+        if (extra){
+            next_zone = (1+t_num)*big_pack;
+            previous_zone = (t_num)*big_pack;
+        }else{
+            next_zone = (big_pack*rest)+(((1+t_num)-rest)*small_pack);
+            previous_zone = (big_pack*rest)+(((t_num)-rest)*small_pack);
+        }
+
+        if( t_num!=(num_ts-1) && (temp_i == (next_zone-1) || temp_i == next_zone )){   // check conflict with next thread
+            omp_set_lock(&(myLocks[temp_i][temp_j]));
+            set_lock=1;
+        }
+        else if (t_num!=0 && (temp_i == (previous_zone-1) || temp_i == previous_zone )){  // check conflict with previous thread
+            omp_set_lock(&(myLocks[temp_i][temp_j]));
+            set_lock=1;
+        }
 
         switch (world[i][j].resident.type)
         {
@@ -454,8 +509,10 @@ void run_black(int *critical, std::vector<std::vector<omp_lock_t>> &myLocks, int
         }
         moves.clear();
 
-        if (*critical)
+        if (set_lock){
             omp_unset_lock(&(myLocks[temp_i][temp_j]));
+            set_lock=0;
+        }
     }               
     
     else if (world[i][j].flag == 0 and moves.size() == 0) 
@@ -465,53 +522,8 @@ void run_black(int *critical, std::vector<std::vector<omp_lock_t>> &myLocks, int
         world[i][j].flag = 0;
 }
 
+
 void backup_world() { std::copy(std::begin(world), std::end(world), std::begin(world_bck)); }
-
-void backup_red()
-{
-    #pragma omp parallel for collapse(2)
-    for (int i=0; i < M; i = i+2)
-        for (int j = 0; j < N; j = j+2)
-        {
-            world_bck[i][j].flag = world[i][j].flag;
-            world_bck[i][j].resident.type = world[i][j].resident.type;
-            world_bck[i][j].resident.breeding_age = world[i][j].resident.breeding_age;
-            world_bck[i][j].resident.starving_age = world[i][j].resident.starving_age;
-        }
-
-    #pragma omp parallel for collapse(2)      
-    for( int i = 1; i < M; i = i + 2)
-        for (int j = 1; j < N; j = j+2)
-        {
-            world_bck[i][j].flag = world[i][j].flag;
-            world_bck[i][j].resident.type = world[i][j].resident.type;
-            world_bck[i][j].resident.breeding_age = world[i][j].resident.breeding_age;
-            world_bck[i][j].resident.starving_age = world[i][j].resident.starving_age;
-        }
-}
-
-void backup_black()
-{
-    #pragma omp parallel for collapse(2)
-    for (int i=0; i < M; i = i + 2)
-        for (int j = 1; j < N; j = j + 2)
-        {
-            world_bck[i][j].flag = world[i][j].flag;
-            world_bck[i][j].resident.type = world[i][j].resident.type;
-            world_bck[i][j].resident.breeding_age = world[i][j].resident.breeding_age;
-            world_bck[i][j].resident.starving_age = world[i][j].resident.starving_age;
-        }
-
-    #pragma omp parallel for collapse(2)
-    for (int i = 1; i < M; i = i + 2)
-        for (int j = 0; j < N; j = j + 2)
-        {
-            world_bck[i][j].flag = world[i][j].flag;
-            world_bck[i][j].resident.type = world[i][j].resident.type;
-            world_bck[i][j].resident.breeding_age = world[i][j].resident.breeding_age;
-            world_bck[i][j].resident.starving_age = world[i][j].resident.starving_age;
-        }
-}
 
 
 int main(int argc, char *argv[])
@@ -530,7 +542,7 @@ int main(int argc, char *argv[])
 
     uint32_t seed = atoi(argv[10]);
     int cursor = 0;
-    int critical = 0;
+    
 
     init_world(world, M, N);
     init_world(world_bck, M, N);
@@ -544,38 +556,30 @@ int main(int argc, char *argv[])
 
     backup_world();
 
+    
     double exec_time;
     exec_time = -omp_get_wtime();
-
+    //omp_set_num_threads(2);
     while (cursor < GENERATIONS)
     {   
-        // red gen even rows
-        #pragma omp parallel for private(critical)
-        for (int i=0; i < M; i = i+2)
-            for (int j = 0; j < N; j = j+2)
-                run_red(&critical, myLocks, i, j);
-
-        // red gen odd rows
-        #pragma omp parallel for private(critical)
-        for( int i = 1; i < M; i = i + 2)
-            for (int j = 1; j < N; j = j+2)
-                run_red(&critical, myLocks, i, j);
+        // red gen
+        #pragma omp parallel for schedule(static)
+        for (int i = 0; i < M; i++){
+            for (int j = (i % 2 == 0) ? 0 : 1; j < N; j = j+2){
+                run_red(myLocks, i, j);
+            }
+        }
  
-        backup_red();
+        backup_world();  
 
-        // black gen even rows
-        #pragma omp parallel for private(critical)
-        for (int i=0; i < M; i = i + 2)
-            for (int j = 1; j < N; j = j + 2)
-                run_black(&critical, myLocks, i, j);
- 
-
-        // black gen odd rows
-        #pragma omp parallel for private(critical)
-        for (int i = 1; i < M; i = i + 2)
-            for (int j = 0; j < N; j = j + 2)
-                run_black(&critical, myLocks, i, j);
-
+        // black gen
+        #pragma omp parallel for schedule(static)
+        for (int i = 0; i < M; i++){
+            for (int j = (i % 2 == 0) ? 1 : 0; j < N; j = j+2){
+                run_black(myLocks, i, j);
+            }
+        }
+        
         kill_foxes(FOX_S_AGE);                          
         backup_world();   
         cursor++;
@@ -587,7 +591,7 @@ int main(int argc, char *argv[])
     destroy_locks(myLocks);
 
     fprintf(stderr, "%.1fs", exec_time); fflush(stdout);
-    printf("\n%d %d %d \n", ROCKS, RABBITS, FOXES); fflush(stdout);
+    printf("\n%d %d %d\n", ROCKS, RABBITS, FOXES); fflush(stdout);
 
     return 0;
 }
