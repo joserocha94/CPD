@@ -200,9 +200,7 @@ void terminate()
 
     #pragma omp parallel for collapse(2) reduction (+ : FOXES, RABBITS, ROCKS)
     for (int i=0; i<M; i++)
-    {    
-        for(int j=0; j<N; j++)
-        {    
+        for(int j=0; j<N; j++)  
             switch(world[i][j].resident.type)
             {
                 case FOX:
@@ -217,8 +215,6 @@ void terminate()
                 default:
                     break;
             }
-        }
-    }
 }
 
 void kill_foxes(int target_age)
@@ -279,15 +275,15 @@ void run_red(std::vector<std::vector<omp_lock_t>> &myLocks, int i, int j)
             previous_zone = (big_pack*rest)+(((t_num)-rest)*small_pack);
         }
 		
-		// check conflict with next thread
+	// check conflict with next thread
         if( t_num!=(num_ts-1) && (temp_i == (next_zone-1) || temp_i == next_zone ))
-		{   
+	{   
             omp_set_lock(&(myLocks[temp_i][temp_j]));
             set_lock=1;
         }
-		// check conflict with previous thread
+	// check conflict with previous thread
         else if (t_num!=0 && (temp_i == (previous_zone-1) || temp_i == previous_zone ))
-		{  
+	{  
             omp_set_lock(&(myLocks[temp_i][temp_j]));
             set_lock=1;
         }
@@ -411,16 +407,21 @@ void run_black( std::vector<std::vector<omp_lock_t>> &myLocks, int i, int j)
         if (extra){
             next_zone = (1+t_num)*big_pack;
             previous_zone = (t_num)*big_pack;
-        }else{
+        }
+	else
+	{
             next_zone = (big_pack*rest)+(((1+t_num)-rest)*small_pack);
             previous_zone = (big_pack*rest)+(((t_num)-rest)*small_pack);
         }
-
-        if( t_num!=(num_ts-1) && (temp_i == (next_zone-1) || temp_i == next_zone )){   // check conflict with next thread
+	// check conflict with next thread
+        if( t_num!=(num_ts-1) && (temp_i == (next_zone-1) || temp_i == next_zone ))
+	{   
             omp_set_lock(&(myLocks[temp_i][temp_j]));
             set_lock=1;
         }
-        else if (t_num!=0 && (temp_i == (previous_zone-1) || temp_i == previous_zone )){  // check conflict with previous thread
+	// check conflict with previous thread
+        else if (t_num!=0 && (temp_i == (previous_zone-1) || temp_i == previous_zone ))
+	{ 
             omp_set_lock(&(myLocks[temp_i][temp_j]));
             set_lock=1;
         }
@@ -468,7 +469,6 @@ void run_black( std::vector<std::vector<omp_lock_t>> &myLocks, int i, int j)
             break;
 
             case RABBIT:
-
                 // breeds?
                 if (world[i][j].resident.breeding_age >= RABBIT_B_AGE)
                 {
@@ -498,11 +498,11 @@ void run_black( std::vector<std::vector<omp_lock_t>> &myLocks, int i, int j)
 
         default:
             break;
-
         }
         moves.clear();
 
-        if (set_lock){
+        if (set_lock)
+	{
             omp_unset_lock(&(myLocks[temp_i][temp_j]));
             set_lock=0;
         }
@@ -514,7 +514,6 @@ void run_black( std::vector<std::vector<omp_lock_t>> &myLocks, int i, int j)
     else if (world[i][j].flag == 1)
         world[i][j].flag = 0;
 }
-
 
 void backup_world() { std::copy(std::begin(world), std::end(world), std::begin(world_bck)); }
 
