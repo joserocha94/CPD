@@ -1,13 +1,14 @@
-
 CC = g++
 CFLAGS = -g -O3 -fopenmp
 
 TARGET = foxes-rabbits
 
+SOURCES = foxes-rabbits-omp.cpp
+
 all: $(TARGET)
  
-$(TARGET): $(TARGET).cpp
-		$(CC) $(CFLAGS) -o $(TARGET) $(TARGET).cpp
+$(TARGET): $(SOURCES)
+		$(CC) $(CFLAGS) -o $(TARGET) $(SOURCES)
  
 clean:
-		$(RM) $(TARGET)
+		rm $(TARGET)
